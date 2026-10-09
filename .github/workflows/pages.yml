@@ -1,0 +1,45 @@
+# Publishes the apps to GitHub Pages together with fresh The Blue Alliance data.
+# Setup (once): Settings → Pages → Source: "GitHub Actions", and
+#               Settings → Secrets and variables → Actions → New secret TBA_KEY.
+# The key stays in GitHub; the website only gets the downloaded data.
+name: Deploy site with TBA data
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/15 * * * *"   # GitHub may run this late when it is busy
+  workflow_dispatch:          # "Run workflow" button for an immediate update
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download TBA data
+        env:
+          TBA_KEY: ${{ secrets.TBA_KEY }}
+        run: |
+          if [ -z "$TBA_KEY" ]; then
+            echo "::warning::No TBA_KEY secret, so the site is published without TBA data."
+          else
+            python3 scripts/fetch_tba.py
+          fi
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v5

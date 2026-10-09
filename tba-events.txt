@@ -1,0 +1,8 @@
+# What the website downloads from The Blue Alliance. Two kinds of lines:
+#
+#   team 5110 2025 2026   every event team 5110 is registered for in those seasons.
+#                         The home page lists these teams, seasons and events.
+#   2026miket             one more event, e.g. one your team isn't registered for.
+#
+# The site is rebuilt with fresh data every 15 minutes (see .github/workflows/pages.yml).
+team 5110 2025 2026

@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f3a68">
+<link rel="manifest" href="manifest.json">
+<title>FRC Scouting</title>
+<style>
+  :root {
+    --bg: #f3f5f8; --card: #ffffff; --text: #18202b; --muted: #5c6878;
+    --line: #d5dbe3; --accent: #1f5fbf; --accent-text: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11151b; --card: #1b212a; --text: #e8edf3; --muted: #9aa6b5;
+      --line: #2e3744; --accent: #4d8ef0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 20px 0; }
+  a.app { display: block; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 18px; color: inherit; text-decoration: none; }
+  a.app:hover { border-color: var(--accent); }
+  a.app b { display: block; font-size: 20px; color: var(--accent); margin-bottom: 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 8px; }
+  .pick { display: grid; grid-template-columns: 120px 120px minmax(0, 1fr); gap: 10px; }
+  @media (max-width: 600px) { .pick { grid-template-columns: 1fr 1fr; } .pick .ev { grid-column: 1 / -1; } }
+  label.lbl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input, select { width: 100%; font: inherit; padding: 10px; border-radius: 8px;
+                  border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  #msg { margin-top: 10px; min-height: 1.5em; }
+  #msg code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="appTitle">FRC Scouting</h1>
+  <div class="muted">Works offline once each page has been opened while online.</div>
+
+  <section class="card" style="margin-top:20px">
+    <h2>Pick your event</h2>
+    <div class="pick">
+      <div><label class="lbl" for="team">Team #</label>
+        <input id="team" type="number" inputmode="numeric" min="1" autocomplete="off"></div>
+      <div><label class="lbl" for="season">Season</label><select id="season"></select></div>
+      <div class="ev"><label class="lbl" for="event">Event</label><select id="event"></select></div>
+    </div>
+    <div class="muted" id="msg"></div>
+  </section>
+
+  <div class="apps">
+    <a class="app" id="scoutLink" href="scout.html">
+      <b>Scout →</b>
+      For scouts' tablets and phones. Record a match and show a QR code.
+      On a tablet, open it and choose <i>Add to Home Screen</i>.
+    </a>
+    <a class="app" id="analysisLink" href="analysis.html">
+      <b>Analysis →</b>
+      For the scanning laptop. Scan QR codes, check the schedule, compare teams
+      with TBA data and export CSV.
+    </a>
+  </div>
+
+</main>
+
+<script src="config.js"></script>
+<script>
+"use strict";
+document.title = document.getElementById("appTitle").textContent = SCOUT_CONFIG.appName;
+
+const $ = (id) => document.getElementById(id);
+const LS_HOME = "frcs.home";
+let index = null;   // tba/index.json, published by scripts/fetch_tba.py
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem(LS_HOME) || "{}"); } catch {}
+const remember = () => {
+  if (!index) return;  // offline: keep the last choice as it was
+  saved = { team: $("team").value, season: $("season").value, event: $("event").value || saved.event };
+  try { localStorage.setItem(LS_HOME, JSON.stringify(saved)); } catch {}
+};
+
+function msg(html) { $("msg").innerHTML = html; }
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+
+function option(value, text) {
+  const o = document.createElement("option");
+  o.value = value; o.textContent = text;
+  return o;
+}
+
+function dates(e) {
+  const f = (d) => new Date(d + "T00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return e.start ? (e.end && e.end !== e.start ? `${f(e.start)} – ${f(e.end)}` : f(e.start)) : "";
+}
+
+// Seasons this site downloads for the team (newest first).
+function fillSeasons() {
+  const team = $("team").value.trim();
+  const seasons = [...(index?.teams[team] || [])].reverse();
+  $("season").innerHTML = "";
+  seasons.forEach((y) => $("season").appendChild(option(y, y)));
+  if (seasons.includes(+saved.season)) $("season").value = saved.season;
+  if (index && team && !seasons.length) {
+    msg(`Team ${esc(team)} isn't set up on this site yet. On GitHub, add the line
+      <code>team ${esc(team)} ${new Date().getFullYear()}</code> to <code>tba-events.txt</code>.`);
+  }
+  return fillEvents();
+}
+
+// The team's registered events for the season, plus any other events listed in tba-events.txt.
+let fillId = 0;
+async function fillEvents() {
+  const id = ++fillId;  // ignore older lookups if the team number changes while typing
+  const team = $("team").value.trim(), season = $("season").value;
+  const sel = $("event");
+  sel.innerHTML = "";
+  if (!season) return update();
+  let mine = [];
+  try {
+    const res = await fetch(`tba/teams/${team}/${season}.json`, { cache: "no-store" });
+    if (res.ok) mine = await res.json();
+  } catch {}
+  if (id !== fillId) return;
+  mine.forEach((e) => sel.appendChild(option(e.key, `${e.name} · ${dates(e)}`)));
+  const others = Object.entries(index.events)
+    .filter(([k]) => k.startsWith(season) && !mine.some((e) => e.key === k))
+    .sort((a, b) => String(a[1].start).localeCompare(String(b[1].start)));
+  if (others.length) {
+    const g = document.createElement("optgroup");
+    g.label = "Other events on this site";
+    others.forEach(([k, e]) => g.appendChild(option(k, `${e.name} · ${dates(e)}`)));
+    sel.appendChild(g);
+  }
+  if (!sel.options.length) {
+    sel.appendChild(option("", `No ${season} events registered yet`));
+  } else if ([...sel.options].some((o) => o.value === saved.event)) {
+    sel.value = saved.event;
+  } else {
+    // Default to the event happening now or next; after the season, the last one.
+    const today = new Date().toISOString().slice(0, 10);
+    sel.value = (mine.find((e) => (e.end || e.start) >= today) || mine.at(-1) || { key: sel.options[0].value }).key;
+  }
+  update();
+}
+
+// Point both apps at the chosen event.
+function update() {
+  const ev = $("event").value || (index ? "" : saved.event || "");
+  for (const [id, page] of [["scoutLink", "scout.html"], ["analysisLink", "analysis.html"]]) {
+    $(id).href = ev ? `${page}?event=${encodeURIComponent(ev)}` : page;
+  }
+  if (ev && index) {
+    const info = index.events[ev];
+    msg(`Opens with <b>${esc(ev)}</b>${info?.city ? ` (${esc(info.city)})` : ""}.
+      TBA data updated ${new Date(index.updated).toLocaleString()}.`);
+  } else if (ev) {
+    msg(`Offline: opens with your last event, <b>${esc(ev)}</b>.`);
+  } else if (index && $("season").value) {
+    msg("Pick an event, or ask whoever runs the GitHub repository to add it to <code>tba-events.txt</code>.");
+  }
+  remember();
+}
+
+$("team").oninput = () => { msg(""); fillSeasons(); };
+$("season").onchange = fillEvents;
+$("event").onchange = update;
+
+(async () => {
+  try {
+    const res = await fetch("tba/index.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    index = await res.json();
+  } catch {
+    msg(location.protocol === "file:"
+      ? "The event list only works on the website, not on a file opened from disk."
+      : "Can't load the event list. You may be offline, or TBA data hasn't been published yet.");
+  }
+  $("team").value = saved.team || Object.keys(index?.teams || {})[0] || "";
+  if (index) fillSeasons(); else update();
+})();
+
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>

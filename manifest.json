@@ -1,0 +1,8 @@
+{
+  "name": "FRC Match Scouting",
+  "short_name": "Scouting",
+  "start_url": "scout.html",
+  "display": "standalone",
+  "background_color": "#f3f5f8",
+  "theme_color": "#1f3a68"
+}

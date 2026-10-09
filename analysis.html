@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scouting Analysis</title>
+<style>
+  :root {
+    --bg: #f3f5f8; --card: #ffffff; --text: #18202b; --muted: #5c6878;
+    --line: #d5dbe3; --accent: #1f5fbf; --accent-text: #fff;
+    --good: #2e7d32; --warn: #b26a00; --bad: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11151b; --card: #1b212a; --text: #e8edf3; --muted: #9aa6b5;
+      --line: #2e3744; --accent: #4d8ef0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { background: var(--card); border-bottom: 1px solid var(--line); padding: 10px 16px;
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 14px 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .05em;
+             color: var(--muted); margin: 0 0 10px; }
+  .top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 800px) { .top { grid-template-columns: 1fr; } }
+  button { font: inherit; border: 0; border-radius: 8px; padding: 9px 14px; cursor: pointer;
+           background: var(--line); color: var(--text); }
+  button.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.danger { background: var(--bad); color: #fff; }
+  input[type=text], select { font: inherit; padding: 9px; border-radius: 8px; width: 100%;
+         border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .video-wrap { position: relative; background: #000; border-radius: 8px; overflow: hidden;
+                aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; }
+  video { width: 100%; height: 100%; object-fit: cover; }
+  .video-wrap .placeholder { color: #aaa; padding: 20px; text-align: center; }
+  .video-wrap.flash { outline: 6px solid var(--good); outline-offset: -6px; }
+  .controls { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .controls select { flex: 1; min-width: 160px; width: auto; }
+  #status { margin-top: 10px; font-weight: 600; min-height: 1.4em; }
+  #status.ok { color: var(--good); } #status.warn { color: var(--warn); } #status.bad { color: var(--bad); }
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 10px; }
+  .stat b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tabs button[aria-selected=true] { background: var(--accent); color: var(--accent-text); }
+  .table-wrap { overflow-x: auto; max-height: 70vh; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--card); cursor: pointer; user-select: none; }
+  td.notes { white-space: normal; min-width: 220px; }
+  td.num, th.num { text-align: right; }
+  tr.fresh td { background: color-mix(in srgb, var(--good) 18%, transparent); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .x { background: transparent; color: var(--muted); padding: 2px 6px; }
+  .x:hover { color: var(--bad); }
+  .tba { display: grid; grid-template-columns: 200px auto; gap: 10px; align-items: end; }
+  @media (max-width: 800px) { .tba { grid-template-columns: 1fr; } }
+  nav.links { display: flex; gap: 14px; font-size: 14px; }
+  nav.links a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  nav.links a[aria-current] { color: var(--muted); }
+  #tbaStatus { margin-top: 8px; } #tbaStatus.bad { color: var(--bad); font-weight: 600; }
+  td.good { color: var(--good); } td.warn { color: var(--warn); font-weight: 600; }
+  td.miss { color: var(--bad); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scouting Analysis</h1>
+  <nav class="links"><a href="index.html">Home</a><a href="scout.html">Scout</a></nav>
+  <button id="exportCsv" class="primary">Export CSV</button>
+  <button id="exportTeams">Export team CSV</button>
+  <button id="exportJson">Export JSON</button>
+  <label><button id="importJsonBtn">Load JSON…</button>
+    <input id="importJson" type="file" accept=".json,application/json" hidden></label>
+  <button id="clearAll" class="danger">Clear all</button>
+</header>
+
+<main>
+  <div class="top">
+    <section class="card">
+      <h2>Camera scan</h2>
+      <div class="video-wrap" id="videoWrap">
+        <video id="video" playsinline muted></video>
+        <div class="placeholder" id="placeholder">Camera is off. Press <b>Start camera</b>.</div>
+      </div>
+      <div class="controls">
+        <button id="camToggle" class="primary">Start camera</button>
+        <select id="camSelect" title="Camera"></select>
+      </div>
+      <div id="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>Handheld scanner / paste</h2>
+      <p class="muted" style="margin-top:0">Click the box, then scan with a USB/Bluetooth barcode scanner
+        (it types the data and presses Enter). You can also paste QR text here.</p>
+      <input id="manual" type="text" placeholder="Scanner input goes here…" autocomplete="off">
+      <div class="controls"><button id="manualAdd">Add</button></div>
+
+      <h2 style="margin-top:18px">Totals</h2>
+      <div class="stats">
+        <div class="stat"><b id="statRecords">0</b><span>match records</span></div>
+        <div class="stat"><b id="statMatches">0</b><span>matches</span></div>
+        <div class="stat"><b id="statTeams">0</b><span>teams</span></div>
+      </div>
+      <div class="muted" id="lastScan"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>The Blue Alliance</h2>
+    <div class="tba">
+      <div><label class="muted" for="tbaEvent">Event code</label>
+        <input id="tbaEvent" type="text" autocomplete="off" placeholder="e.g. 2026miket"></div>
+      <button id="tbaFetch" class="primary">Update TBA data</button>
+    </div>
+    <div class="muted" id="tbaStatus"></div>
+  </section>
+
+  <section class="card">
+    <div class="tabs">
+      <button data-tab="records" aria-selected="true">Match records</button>
+      <button data-tab="teams" aria-selected="false">Team averages</button>
+      <button data-tab="schedule" aria-selected="false">Schedule</button>
+      <input id="filter" type="text" placeholder="Filter by team, match, or scout…" style="max-width:280px;margin-left:auto">
+    </div>
+    <div class="table-wrap"><table id="table"></table></div>
+  </section>
+</main>
+
+<script src="lib/jsQR.js"></script>
+<script src="config.js"></script>
+<script src="tba.js"></script>
+<script>
+"use strict";
+const LS_DATA = "frcs.import.records";  // old name, kept so saved records survive the rename
+const $ = (id) => document.getElementById(id);
+const FIELDS = SCOUT_CONFIG.allFields;
+
+// Header columns stored in every record (see buildRecord in scout.html).
+const HEADER_COLS = [
+  { key: "_e", label: "Event" }, { key: "_m", label: "Match", num: true },
+  { key: "_t", label: "Team", num: true }, { key: "_p", label: "Station" },
+  { key: "_s", label: "Scout" }, { key: "_n", label: "No-show", num: true },
+  { key: "_v", label: "Cfg ver", num: true },
+];
+
+// ---------- storage ----------
+let records = [];
+try { records = JSON.parse(localStorage.getItem(LS_DATA) || "[]"); } catch { records = []; }
+function persist() {
+  try { localStorage.setItem(LS_DATA, JSON.stringify(records)); }
+  catch { setStatus("Could not save to browser storage — export now!", "bad"); }
+}
+
+// One record per event + match + driver station.
+const recKey = (r) => `${r._e}|${r._m}|${r._p}`;
+let freshKey = null;
+
+// ---------- ingest ----------
+function ingest(text) {
+  text = (text || "").trim();
+  if (!text.startsWith(QR_PREFIX)) { setStatus("Not a scouting QR code.", "bad"); return false; }
+  let rec;
+  try { rec = JSON.parse(text.slice(QR_PREFIX.length)); }
+  catch { setStatus("QR code data is damaged — rescan.", "bad"); return false; }
+  if (!rec || !rec._m || !rec._t || !rec._p) { setStatus("QR code is missing match/team/station.", "bad"); return false; }
+
+  const key = recKey(rec);
+  const i = records.findIndex((r) => recKey(r) === key);
+  const label = `Match ${rec._m} · Team ${rec._t} · ${rec._p}`;
+  if (i >= 0) {
+    if (JSON.stringify(records[i]) === JSON.stringify(rec)) {
+      setStatus(`Already have ${label}`, "warn");
+      return true;
+    }
+    records[i] = rec;
+    setStatus(`Updated ${label} (replaced earlier scan)`, "warn");
+  } else {
+    records.push(rec);
+    setStatus(`✓ Added ${label}`, "ok");
+  }
+  if (rec._v !== SCOUT_CONFIG.version) {
+    setStatus(`${$("status").textContent} — warning: scanned config v${rec._v}, this app is v${SCOUT_CONFIG.version}`, "warn");
+  }
+  freshKey = key;
+  persist();
+  render();
+  beep();
+  $("lastScan").textContent = `Last: ${label} by ${rec._s || "?"} at ${new Date().toLocaleTimeString()}`;
+  return true;
+}
+
+function setStatus(msg, cls) { const s = $("status"); s.textContent = msg; s.className = cls || ""; }
+
+let audioCtx;
+function beep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 1200; g.gain.value = 0.08;
+    o.connect(g).connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.08);
+  } catch {}
+  const w = $("videoWrap");
+  w.classList.add("flash");
+  setTimeout(() => w.classList.remove("flash"), 300);
+}
+
+// ---------- camera scanning ----------
+let stream = null, scanning = false, lastText = "", lastTime = 0;
+const canvas = document.createElement("canvas");
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+async function listCameras() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+    const sel = $("camSelect"), cur = sel.value;
+    sel.innerHTML = "";
+    devs.forEach((d, i) => {
+      const o = document.createElement("option");
+      o.value = d.deviceId; o.textContent = d.label || `Camera ${i + 1}`;
+      sel.appendChild(o);
+    });
+    if (cur) sel.value = cur;
+  } catch {}
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setStatus("Camera not available. Open this page via http://localhost (see README) or use a handheld scanner.", "bad");
+    return;
+  }
+  const id = $("camSelect").value;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: id ? { deviceId: { exact: id } } : { facingMode: "environment" },
+      audio: false,
+    });
+  } catch (e) {
+    setStatus("Could not start camera: " + e.message, "bad");
+    return;
+  }
+  const v = $("video");
+  v.srcObject = stream;
+  await v.play();
+  $("placeholder").style.display = "none";
+  $("camToggle").textContent = "Stop camera";
+  scanning = true;
+  listCameras();
+  requestAnimationFrame(scanFrame);
+}
+
+function stopCamera() {
+  scanning = false;
+  stream?.getTracks().forEach((t) => t.stop());
+  stream = null;
+  $("placeholder").style.display = "";
+  $("camToggle").textContent = "Start camera";
+}
+
+let lastFrame = 0;
+function scanFrame(t) {
+  if (!scanning) return;
+  requestAnimationFrame(scanFrame);
+  if (t - lastFrame < 120) return; // ~8 scans/sec is plenty
+  lastFrame = t;
+  const v = $("video");
+  if (v.readyState < 2) return;
+  // Downscale large frames for speed; QR codes on a tablet screen are big.
+  const scale = Math.min(1, 800 / v.videoWidth);
+  canvas.width = Math.round(v.videoWidth * scale);
+  canvas.height = Math.round(v.videoHeight * scale);
+  ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+  if (!code || !code.data) return;
+  // Ignore the same code held in front of the camera for a few seconds.
+  const now = Date.now();
+  if (code.data === lastText && now - lastTime < 3000) return;
+  lastText = code.data; lastTime = now;
+  ingest(code.data);
+}
+
+$("camToggle").onclick = () => (stream ? stopCamera() : startCamera());
+$("camSelect").onchange = () => { if (stream) { stopCamera(); startCamera(); } };
+
+// ---------- manual / handheld scanner ----------
+$("manual").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); if (ingest($("manual").value)) $("manual").value = ""; }
+});
+$("manualAdd").onclick = () => { if (ingest($("manual").value)) $("manual").value = ""; };
+
+// ---------- tables ----------
+let tab = "records", sortKey = "_m", sortDir = 1;
+
+document.querySelectorAll(".tabs button[data-tab]").forEach((b) => {
+  b.onclick = () => {
+    tab = b.dataset.tab;
+    sortKey = tab === "teams" ? "_t" : "_m";
+    sortDir = 1;
+    document.querySelectorAll(".tabs button[data-tab]").forEach((x) =>
+      x.setAttribute("aria-selected", x === b ? "true" : "false"));
+    render();
+  };
+});
+$("filter").oninput = render;
+
+function matchesFilter(r, keys = ["_t", "_m", "_s", "_p", "_name"]) {
+  const q = $("filter").value.trim().toLowerCase();
+  if (!q) return true;
+  return keys.some((k) => String(r[k] ?? "").toLowerCase().includes(q));
+}
+
+function sortRows(rows) {
+  return rows.sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (typeof x === "number" && typeof y === "number") return (x - y) * sortDir;
+    return String(x ?? "").localeCompare(String(y ?? ""), undefined, { numeric: true }) * sortDir;
+  });
+}
+
+function buildTable(cols, rows, rowExtra, emptyText = "No data yet — scan some QR codes.") {
+  const table = $("table");
+  table.innerHTML = "";
+  const thead = table.createTHead().insertRow();
+  for (const c of cols) {
+    const th = document.createElement("th");
+    th.textContent = c.label + (sortKey === c.key ? (sortDir > 0 ? " ▲" : " ▼") : "");
+    if (c.num) th.className = "num";
+    th.onclick = () => { sortDir = sortKey === c.key ? -sortDir : 1; sortKey = c.key; render(); };
+    thead.appendChild(th);
+  }
+  if (rowExtra) thead.appendChild(document.createElement("th"));
+  const tbody = table.createTBody();
+  if (!rows.length) {
+    const td = tbody.insertRow().insertCell();
+    td.colSpan = cols.length + 1;
+    td.className = "muted";
+    td.textContent = emptyText;
+    return;
+  }
+  for (const r of rows) {
+    const tr = tbody.insertRow();
+    for (const c of cols) {
+      const td = tr.insertCell();
+      const v = r[c.key];
+      td.textContent = c.fmt ? c.fmt(v) : (v ?? "");
+      td.className = [c.num && "num", c.type === "text" && "notes", c.cls?.(v, r)].filter(Boolean).join(" ");
+    }
+    if (rowExtra) rowExtra(tr, r);
+  }
+}
+
+function render() {
+  const keys = new Set(records.map((r) => `${r._e}|${r._m}`));
+  $("statRecords").textContent = records.length;
+  $("statMatches").textContent = keys.size;
+  $("statTeams").textContent = new Set(records.map((r) => r._t)).size;
+
+  if (tab === "records") {
+    const cols = [
+      ...recordCols(),
+      ...FIELDS.map((f) => ({ key: f.key, label: `${f.section.slice(0, 4)} ${f.label}`, type: f.type,
+        num: f.type !== "text" && f.type !== "select" })),
+    ];
+    const rows = sortRows(records.map(withTba).filter((r) => matchesFilter(r)));
+    buildTable(cols, rows, (tr, r) => {
+      if (recKey(r) === freshKey) tr.className = "fresh";
+      const td = tr.insertCell();
+      const x = document.createElement("button");
+      x.className = "x"; x.textContent = "✕"; x.title = "Delete this record";
+      x.onclick = () => {
+        if (!confirm(`Delete match ${r._m}, team ${r._t}?`)) return;
+        records = records.filter((y) => recKey(y) !== recKey(r));
+        persist(); render();
+      };
+      td.appendChild(x);
+    });
+  } else if (tab === "teams") {
+    const { cols, rows } = teamSummary();
+    buildTable(cols, sortRows(rows.filter((r) => matchesFilter(r))));
+  } else {
+    const { cols, rows } = scheduleView();
+    buildTable(cols, sortRows(rows.filter((r) => matchesFilter(r, ["_m", ...TBA.STATIONS]))), null,
+      TBA.data ? "TBA has no qualification schedule for this event yet." : "Press Update TBA data first.");
+  }
+}
+
+// ---------- TBA columns ----------
+// Header columns plus team name and schedule check once TBA data is loaded.
+function recordCols() {
+  if (!TBA.data) return HEADER_COLS;
+  const cols = [...HEADER_COLS];
+  cols.splice(3, 0, { key: "_name", label: "Team name" });
+  cols.push({ key: "_chk", label: "Schedule check",
+    cls: (v) => (v === "✓" ? "good" : v ? "warn" : "") });
+  // Official per-robot results, e.g. tower level, to compare with what the scout saw.
+  if (hasGameData()) {
+    for (const f of GAME.robot || []) cols.push({ key: "_gr_" + f.key, label: "TBA " + f.label, num: true });
+  }
+  return cols;
+}
+
+function withTba(r) {
+  const want = TBA.scheduled(r._e, r._m, r._p);
+  const row = { ...r, _name: TBA.teamName(r._t),
+    _chk: want == null ? "" : want === r._t ? "✓" : `⚠ schedule says ${want}` };
+  // Only trust TBA's robot result when the scout had the scheduled team.
+  const g = want === r._t ? TBA.forEvent(r._e)?.matches[r._m]?.g?.[r._p] : null;
+  for (const f of GAME.robot || []) row["_gr_" + f.key] = g?.[f.key] ?? null;
+  return row;
+}
+
+// ---------- game-specific TBA stats (SCOUT_CONFIG.tba) ----------
+const GAME = SCOUT_CONFIG.tba || {};
+const hasGameData = () => !!TBA.data && Object.values(TBA.data.matches).some((m) => m.g);
+
+// Per team: robot-field averages and "how often above 0", alliance rates, and cOPRs.
+function gameStats(d) {
+  const per = new Map();
+  const team = (t) => per.get(t) || per.set(t, { n: 0, sums: {}, hits: {} }).get(t);
+  for (const m of Object.values(d.matches)) {
+    if (!m.g) continue;
+    for (const st of TBA.STATIONS) {
+      const t = m[st], robot = m.g[st], ally = m.g[st[0] === "R" ? "red" : "blue"];
+      if (!t || !robot || !ally) continue;
+      const s = team(t);
+      s.n++;
+      for (const f of GAME.robot || []) {
+        const v = Number(robot[f.key]) || 0;
+        s.sums[f.key] = (s.sums[f.key] || 0) + v;
+        s.hits[f.key] = (s.hits[f.key] || 0) + (v > 0 ? 1 : 0);
+      }
+      for (const f of (GAME.alliance || []).filter((f) => f.rate)) {
+        s.sums[f.key] = (s.sums[f.key] || 0) + (Number(ally[f.key]) || 0);
+      }
+    }
+  }
+  const oprs = Object.fromEntries((GAME.alliance || []).filter((f) => f.opr).map((f) => [f.key, cOpr(d, f.key)]));
+  return { per, oprs };
+}
+
+// Component OPR: the per-team numbers that best add up (least squares) to each
+// alliance's value for this field across all played qualification matches.
+function cOpr(d, key) {
+  const teams = [...new Set(Object.values(d.matches).flatMap((m) => TBA.STATIONS.map((st) => m[st])))]
+    .filter(Boolean);
+  const idx = new Map(teams.map((t, i) => [t, i]));
+  const n = teams.length;
+  const A = Array.from({ length: n }, () => new Float64Array(n + 1));  // [AᵀA | Aᵀb]
+  for (const m of Object.values(d.matches)) {
+    if (!m.g) continue;
+    for (const c of ["red", "blue"]) {
+      const v = Number(m.g[c]?.[key]);
+      if (m.g[c]?.[key] == null || Number.isNaN(v)) continue;
+      const ix = TBA.STATIONS.filter((st) => st[0] === c[0].toUpperCase()).map((st) => idx.get(m[st]));
+      for (const a of ix) { A[a][n] += v; for (const b of ix) A[a][b] += 1; }
+    }
+  }
+  for (let i = 0; i < n; i++) A[i][i] += 1e-6;  // keeps teams with no played matches solvable
+  // Gaussian elimination with partial pivoting.
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]];
+    for (let r = 0; r < n; r++) {
+      if (r === c || !A[r][c]) continue;
+      const k = A[r][c] / A[c][c];
+      for (let j = c; j <= n; j++) A[r][j] -= k * A[c][j];
+    }
+  }
+  return new Map(teams.map((t, i) => [t, A[i][n] / A[i][i]]));
+}
+
+// Every qualification match from TBA, showing which robots have been scouted.
+function scheduleView() {
+  const d = TBA.data;
+  const cols = [{ key: "_m", label: "Match", num: true }];
+  if (!d) return { cols, rows: [] };
+  const scouted = new Map(records
+    .filter((r) => String(r._e ?? "").trim().toLowerCase() === d.event)
+    .map((r) => [`${r._m}|${r._p}`, r._t]));
+  for (const st of TBA.STATIONS) cols.push({ key: st, label: st, cls: (v, r) => r["_c" + st] });
+  cols.push({ key: "_got", label: "Scouted", num: true },
+            { key: "rs", label: "Red score", num: true }, { key: "bs", label: "Blue score", num: true });
+  const rows = Object.entries(d.matches).map(([m, sched]) => {
+    const row = { _m: Number(m), rs: sched.rs, bs: sched.bs };
+    let got = 0;
+    for (const st of TBA.STATIONS) {
+      const team = sched[st], have = scouted.get(`${m}|${st}`);
+      if (have == null) {
+        row[st] = team;
+        row["_c" + st] = sched.rs != null ? "miss" : "";  // played but not scouted
+      } else if (have === team) {
+        row[st] = `${team} ✓`; row["_c" + st] = "good"; got++;
+      } else {
+        row[st] = `${team} (scouted ${have})`; row["_c" + st] = "warn"; got++;
+      }
+    }
+    row._got = `${got}/6`;
+    return row;
+  });
+  return { cols, rows };
+}
+
+function showTbaStatus(msg, cls) {
+  const el = $("tbaStatus");
+  el.className = cls || "muted";
+  if (msg) { el.textContent = msg; return; }
+  const d = TBA.data;
+  if (!d) { el.textContent = "Nothing downloaded yet. You need internet only while downloading."; return; }
+  const ms = Object.values(d.matches);
+  const parts = [`${Object.keys(d.teams).length} teams`,
+    `${ms.length} qualification matches (${ms.filter((m) => m.rs != null).length} played)`];
+  if (Object.keys(d.oprs).length) parts.push("OPRs");
+  if (Object.keys(d.ranks).length) parts.push("rankings");
+  el.textContent = `${d.event}: ${parts.join(", ")}. TBA data from ${new Date(d.fetched).toLocaleString()}.`;
+}
+
+// Carry the current event over to the other app's link.
+function updateNav(ev) {
+  document.querySelectorAll("nav.links a").forEach((a) => {
+    const page = a.getAttribute("href").split("?")[0];
+    a.setAttribute("href", ev && page !== "index.html" ? `${page}?event=${encodeURIComponent(ev)}` : page);
+  });
+}
+// The event picked on the home page arrives as ?event=…
+const urlEvent = new URLSearchParams(location.search).get("event")?.trim().toLowerCase() || "";
+// Remove it from the address so a later reload keeps any event typed here.
+if (urlEvent) history.replaceState(null, "", location.pathname);
+$("tbaEvent").value = urlEvent || TBA.data?.event || records.at(-1)?._e || "";
+updateNav($("tbaEvent").value.trim());
+$("tbaEvent").onchange = () => updateNav($("tbaEvent").value.trim());
+$("tbaFetch").onclick = async () => {
+  const b = $("tbaFetch");
+  b.disabled = true; b.textContent = "Downloading…";
+  try {
+    await TBA.download($("tbaEvent").value);
+    showTbaStatus();
+    render();
+  } catch (e) {
+    showTbaStatus(e.message, "bad");
+  }
+  b.disabled = false; b.textContent = "Update TBA data";
+};
+
+// Averages for counters/ratings, % for checkboxes, most common answer for selects.
+function teamSummary() {
+  const byTeam = new Map();
+  for (const r of records) {
+    if (!byTeam.has(r._t)) byTeam.set(r._t, []);
+    byTeam.get(r._t).push(r);
+  }
+  const summaryFields = FIELDS.filter((f) => f.type !== "text");
+  const fmt1 = (v) => (v == null || Number.isNaN(v) ? "" : v.toFixed(1));
+  const pct = (v) => (v == null || Number.isNaN(v) ? "" : Math.round(v * 100) + "%");
+  // List every team at the TBA event, including ones nobody has scouted yet.
+  const d = TBA.data;
+  if (d) for (const t of Object.keys(d.teams)) if (!byTeam.has(+t)) byTeam.set(+t, []);
+  const hasRanks = d && Object.keys(d.ranks).length, hasOprs = d && Object.keys(d.oprs).length;
+  const fmt2 = (v) => (v == null ? "" : (+v).toFixed(2));
+  const game = hasGameData() ? gameStats(d) : null;
+  const cols = [
+    { key: "_t", label: "Team", num: true },
+    ...(d ? [{ key: "_name", label: "Name" }] : []),
+    { key: "_count", label: "Matches", num: true },
+    { key: "_noshow", label: "No-shows", num: true },
+    ...(hasRanks ? [{ key: "_rank", label: "Rank", num: true }, { key: "_rec", label: "W-L-T" },
+                    { key: "_rs", label: d.rsName, num: true, fmt: fmt2 }] : []),
+    ...(hasOprs ? [{ key: "_opr", label: "OPR", num: true, fmt: fmt1 },
+                   { key: "_dpr", label: "DPR", num: true, fmt: fmt1 },
+                   { key: "_ccwm", label: "CCWM", num: true, fmt: fmt1 }] : []),
+    ...(game ? [
+      { key: "_gn", label: "TBA matches", num: true },
+      ...(GAME.robot || []).flatMap((f) => [
+        { key: "_ga_" + f.key, label: `TBA ${f.label} avg`, num: true, fmt: fmt1 },
+        { key: "_gp_" + f.key, label: `TBA ${f.label} > 0 %`, num: true, fmt: pct }]),
+      ...(GAME.alliance || []).filter((f) => f.opr || f.rate).map((f) => f.opr
+        ? { key: "_go_" + f.key, label: `${f.label} cOPR`, num: true, fmt: fmt1 }
+        : { key: "_gq_" + f.key, label: `${f.label} %`, num: true, fmt: pct }),
+    ] : []),
+    ...summaryFields.map((f) => ({
+      key: f.key,
+      label: `${f.section.slice(0, 4)} ${f.label}` + (f.type === "checkbox" ? " %" : f.type === "select" ? " (most)" : " avg"),
+      num: f.type !== "select",
+      fmt: f.type === "checkbox" ? pct : f.type === "select" ? undefined : fmt1,
+    })),
+  ];
+  const rows = [];
+  for (const [team, list] of byTeam) {
+    const played = list.filter((r) => !r._n);
+    const row = { _t: team, _count: list.length, _noshow: list.length - played.length };
+    if (d) {
+      const rk = d.ranks[team], op = d.oprs[team];
+      Object.assign(row, { _name: TBA.teamName(team), _rank: rk?.rank ?? null, _rec: rk?.rec ?? "",
+        _rs: rk?.rs ?? null, _opr: op?.opr ?? null, _dpr: op?.dpr ?? null, _ccwm: op?.ccwm ?? null });
+    }
+    if (game) {
+      const s = game.per.get(team);
+      row._gn = s?.n ?? 0;
+      for (const f of GAME.robot || []) {
+        row["_ga_" + f.key] = s?.n ? s.sums[f.key] / s.n : null;
+        row["_gp_" + f.key] = s?.n ? s.hits[f.key] / s.n : null;
+      }
+      for (const f of GAME.alliance || []) {
+        if (f.rate) row["_gq_" + f.key] = s?.n ? s.sums[f.key] / s.n : null;
+        if (f.opr) row["_go_" + f.key] = game.oprs[f.key].get(team) ?? null;
+      }
+    }
+    for (const f of summaryFields) {
+      if (f.type === "select") {
+        const counts = {};
+        played.forEach((r) => { counts[r[f.key]] = (counts[r[f.key]] || 0) + 1; });
+        row[f.key] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+      } else {
+        // Ratings of 0 mean "not rated", so leave them out of the average.
+        const vals = played.map((r) => Number(r[f.key]))
+          .filter((v) => !Number.isNaN(v) && !(f.type === "rating" && v === 0));
+        row[f.key] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+      }
+    }
+    rows.push(row);
+  }
+  return { cols, rows };
+}
+
+// ---------- export / import ----------
+function download(name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function csvCell(v) {
+  const s = String(v ?? "");
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+
+$("exportCsv").onclick = () => {
+  const cols = [...recordCols(), { key: "_ts", label: "Timestamp" },
+    ...FIELDS.map((f) => ({ key: f.key, label: `${f.section} - ${f.label}` }))];
+  const lines = [cols.map((c) => csvCell(c.label)).join(",")];
+  const sorted = records.map(withTba).sort((a, b) => a._m - b._m || String(a._p).localeCompare(b._p));
+  for (const r of sorted) {
+    lines.push(cols.map((c) => csvCell(c.key === "_ts" && r._ts
+      ? new Date(r._ts * 1000).toISOString() : r[c.key])).join(","));
+  }
+  download(`scouting-${stamp()}.csv`, lines.join("\r\n"), "text/csv");
+};
+
+$("exportTeams").onclick = () => {
+  const { cols, rows } = teamSummary();
+  const lines = [cols.map((c) => csvCell(c.label)).join(",")];
+  for (const r of rows.sort((a, b) => a._t - b._t)) {
+    lines.push(cols.map((c) => csvCell(c.fmt ? c.fmt(r[c.key]) : r[c.key])).join(","));
+  }
+  download(`teams-${stamp()}.csv`, lines.join("\r\n"), "text/csv");
+};
+
+$("exportJson").onclick = () =>
+  download(`scouting-${stamp()}.json`, JSON.stringify(records, null, 1), "application/json");
+
+// Merge a JSON export from another analysis laptop (e.g. a backup).
+$("importJsonBtn").onclick = () => $("importJson").click();
+$("importJson").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const list = JSON.parse(await file.text());
+    let added = 0;
+    for (const rec of list) {
+      if (!rec || !rec._m || !rec._p) continue;
+      const i = records.findIndex((r) => recKey(r) === recKey(rec));
+      if (i >= 0) records[i] = rec; else { records.push(rec); added++; }
+    }
+    persist(); render();
+    setStatus(`Loaded ${list.length} records from file (${added} new).`, "ok");
+  } catch {
+    setStatus("That file is not a scouting JSON export.", "bad");
+  }
+  e.target.value = "";
+};
+
+$("clearAll").onclick = () => {
+  if (!records.length) return;
+  if (confirm(`Delete all ${records.length} records? Export first if you need them.`)) {
+    records = []; persist(); render(); setStatus("Cleared.", "");
+  }
+};
+
+// ---------- start ----------
+listCameras();
+showTbaStatus();
+render();
+// New event from the home page: load its TBA data now if we can.
+if (urlEvent && TBA.data?.event !== urlEvent && navigator.onLine) $("tbaFetch").click();
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>
