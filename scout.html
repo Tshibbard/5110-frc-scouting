@@ -66,6 +66,9 @@
   .stations button[aria-pressed=true] { opacity: 1; outline: 3px solid var(--text); }
   .text-field { flex-direction: column; align-items: stretch; }
   .err { color: var(--red); font-weight: 600; min-height: 1.4em; margin: 8px 0 0; }
+  .ok { color: var(--good); font-weight: 600; min-height: 1.4em; margin: 8px 0 0; }
+  .actions { display: flex; gap: 10px; }
+  .actions button { flex: 1; }
 
   /* QR overlay */
   #qrOverlay { position: fixed; inset: 0; background: #fff; color: #000; z-index: 20;
@@ -77,6 +80,7 @@
   #qrOverlay .btns { display: flex; gap: 10px; width: min(92vw, 480px); }
   #qrOverlay .btns button { flex: 1; padding: 14px; font-size: 17px; }
   #qrOverlay button.secondary { background: #e3e7ec; color: #000; }
+  #qrOverlay button:disabled { opacity: .4; cursor: default; }
 
   .history-item { display: flex; align-items: center; gap: 10px; padding: 8px 0;
                   border-top: 1px solid var(--line); }
@@ -98,6 +102,7 @@
 </header>
 
 <main>
+  <p class="ok" id="saved" role="status" style="margin:0 0 8px"></p>
   <!-- Scout / event setup (remembered between matches) -->
   <section class="card">
     <h2>Setup</h2>
@@ -113,6 +118,18 @@
         for each match and station, even offline.</p>
       <button id="tbaFetch" class="primary">Download schedule</button>
       <p class="err" id="tbaError"></p>
+    </details>
+    <details style="margin-top:8px" id="sheetBox">
+      <summary>Google Sheet backup <span class="muted" id="sheetStatus"></span></summary>
+      <p class="muted">Saved matches are sent to the team's Google Sheet whenever there is internet.
+        Matches saved offline are sent later. Get the URL or a setup link from whoever set up the Sheet.</p>
+      <label class="lbl" for="sheetUrl">Web-app URL</label>
+      <input id="sheetUrl" type="password" autocomplete="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="sheetSave">Save URL</button>
+        <button id="sheetSend" class="primary">Send now</button>
+      </div>
+      <p class="err" id="sheetError"></p>
     </details>
   </section>
 
@@ -134,12 +151,16 @@
   <div id="sections"></div>
 
   <p class="err" id="error"></p>
-  <button class="primary big" id="submit">Save &amp; show QR code</button>
+  <div class="actions">
+    <button class="big" id="showQr">Show QR code</button>
+    <button class="primary big" id="submit">Save match</button>
+  </div>
 
   <section class="card" style="margin-top:20px">
     <h2>Saved on this device</h2>
     <div id="history"><p class="muted">No matches saved yet.</p></div>
     <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="primary" id="showAll">Show all as QR</button>
       <button id="clearHistory">Clear saved matches</button>
     </div>
   </section>
@@ -150,14 +171,16 @@
   <canvas id="qrCanvas"></canvas>
   <div class="muted" style="color:#555">Hold this up to the scanning station</div>
   <div class="btns">
+    <button class="secondary" id="qrPrev" hidden>← Previous</button>
     <button class="secondary" id="qrClose">Back</button>
-    <button class="primary" id="qrNext">Next match →</button>
+    <button class="primary" id="qrNext" hidden>Next code →</button>
   </div>
 </div>
 
 <script src="lib/qrcode.js"></script>
 <script src="config.js"></script>
 <script src="tba.js"></script>
+<script src="sheet.js"></script>
 <script>
 "use strict";
 const STATIONS = ["R1", "R2", "R3", "B1", "B2", "B3"];
@@ -354,10 +377,46 @@ function encodeRecord(rec) {
     (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
 }
 
-function showQR(rec) {
-  drawQR(encodeRecord(rec));
-  $("qrInfo").textContent = `Match ${rec._m} · Team ${rec._t} · ${rec._p}`;
+// The overlay shows one or more codes; pages = [{ text, info }].
+let qrPages = [], qrPage = 0;
+function showPages(pages) {
+  qrPages = pages; qrPage = 0;
+  const many = pages.length > 1;
+  $("qrPrev").hidden = $("qrNext").hidden = !many;
+  drawPage();
   $("qrOverlay").classList.add("show");
+}
+function drawPage() {
+  const p = qrPages[qrPage];
+  drawQR(p.text);
+  $("qrInfo").textContent = p.info;
+  $("qrPrev").disabled = qrPage === 0;
+  $("qrNext").disabled = qrPage === qrPages.length - 1;
+}
+
+function showQR(rec) {
+  showPages([{ text: encodeRecord(rec), info: `Match ${rec._m} · Team ${rec._t} · ${rec._p}` }]);
+}
+
+// All saved matches, as a JSON array per code. Each code stands on its own, so
+// they can be scanned in any order. Codes are kept small enough to scan reliably.
+const ALL_QR_MAX = 1000;
+function showAllQR(hist) {
+  const chunks = [];
+  let cur = [];
+  for (const rec of hist) {
+    if (cur.length && encodeRecord([...cur, rec]).length > ALL_QR_MAX) { chunks.push(cur); cur = []; }
+    cur.push(rec);
+  }
+  if (cur.length) chunks.push(cur);
+  showPages(chunks.map((c, i) => {
+    const ms = c.map((r) => r._m);
+    return {
+      text: encodeRecord(c),
+      info: `All saved · code ${i + 1} of ${chunks.length} · ` +
+            (c.length === 1 ? `match ${ms[0]}` : `${c.length} matches (${Math.min(...ms)}–${Math.max(...ms)})`),
+    };
+  }));
 }
 
 // ---------- match schedule (The Blue Alliance) ----------
@@ -414,7 +473,9 @@ $("tbaFetch").onclick = async () => {
 function renderHistory() {
   const hist = load(LS_HISTORY, []);
   $("savedCount").textContent = hist.length ? `${hist.length} saved` : "";
+  showSheetStatus();
   const box = $("history");
+  $("showAll").disabled = !hist.length;
   if (!hist.length) { box.innerHTML = `<p class="muted">No matches saved yet.</p>`; return; }
   box.innerHTML = "";
   for (const rec of hist.slice().reverse()) {
@@ -422,6 +483,14 @@ function renderHistory() {
     item.className = "history-item";
     const label = document.createElement("span");
     label.textContent = `Match ${rec._m} — Team ${rec._t} (${rec._p})`;
+    if (SHEET.url()) {
+      const tag = document.createElement("span");
+      tag.className = "muted";
+      tag.style.flex = "0";
+      tag.style.whiteSpace = "nowrap";
+      tag.textContent = SHEET.isSent(rec) ? "✓ Sheet" : "not sent";
+      label.append(" ", tag);
+    }
     const btn = document.createElement("button");
     btn.textContent = "Show QR";
     btn.onclick = () => showQR(rec);
@@ -430,6 +499,46 @@ function renderHistory() {
   }
 }
 
+// ---------- Google Sheet backup ----------
+function showSheetStatus() {
+  const hist = load(LS_HISTORY, []);
+  const waiting = hist.filter((r) => !SHEET.isSent(r)).length;
+  $("sheetStatus").textContent = !SHEET.url() ? "· off"
+    : waiting ? `· ${waiting} not sent yet` : "· all sent";
+}
+
+// Quietly send anything unsent; errors only show when asked (Send now).
+async function sendToSheet(showErrors) {
+  if (!SHEET.url()) return;
+  try {
+    await SHEET.sendPending(load(LS_HISTORY, []));
+    $("sheetError").textContent = "";
+  } catch (e) {
+    if (showErrors) $("sheetError").textContent = e.message;
+  }
+  renderHistory();
+}
+
+$("sheetSave").onclick = () => {
+  try {
+    SHEET.setUrl($("sheetUrl").value);
+    $("sheetError").textContent = "";
+    renderHistory();
+    sendToSheet(true);
+  } catch (e) {
+    $("sheetError").textContent = e.message;
+  }
+};
+$("sheetSend").onclick = async () => {
+  if (!SHEET.url()) { $("sheetError").textContent = "Enter the web-app URL and press Save URL first."; return; }
+  const b = $("sheetSend");
+  b.disabled = true; b.textContent = "Sending…";
+  await sendToSheet(true);
+  b.disabled = false; b.textContent = "Send now";
+};
+window.addEventListener("online", () => sendToSheet(false));
+setInterval(() => { if (navigator.onLine) sendToSheet(false); }, 60000);
+
 // ---------- events ----------
 $("scout").onchange = $("match").onchange = saveSetup;
 $("event").onchange = () => { saveSetup(); showTbaStatus(); syncTeam(); updateNav($("event").value.trim()); };
@@ -437,11 +546,23 @@ $("match").oninput = syncTeam;
 $("team").oninput = showTeamHint;
 $("noShow").onclick = () => { noShow = !noShow; setPressed($("noShow"), noShow); };
 
-$("submit").onclick = () => {
+// Build the record from the form, or show what's missing.
+function checkedRecord() {
   const rec = buildRecord();
   const err = validate(rec);
   $("error").textContent = err || "";
-  if (err) return;
+  $("saved").textContent = "";
+  return err ? null : rec;
+}
+
+$("showQr").onclick = () => {
+  const rec = checkedRecord();
+  if (rec) showQR(rec);
+};
+
+$("submit").onclick = () => {
+  const rec = checkedRecord();
+  if (!rec) return;
   const hist = load(LS_HISTORY, []);
   // Re-scouting the same match/station replaces the earlier entry.
   const i = hist.findIndex((h) => h._e === rec._e && h._m === rec._m && h._p === rec._p);
@@ -449,21 +570,22 @@ $("submit").onclick = () => {
   hist.push(rec);
   save(LS_HISTORY, hist);
   renderHistory();
-  showQR(rec);
-  justSubmitted = true;
+  sendToSheet(false);
+  // Move on to the next match.
+  $("match").value = (parseInt($("match").value, 10) || 0) + 1;
+  saveSetup();
+  resetForm();
+  window.scrollTo(0, 0);
+  $("saved").textContent = `✓ Saved match ${rec._m} · Team ${rec._t}`;
 };
 
-let justSubmitted = false;
-$("qrClose").onclick = () => { $("qrOverlay").classList.remove("show"); justSubmitted = false; };
-$("qrNext").onclick = () => {
-  $("qrOverlay").classList.remove("show");
-  if (justSubmitted) {
-    $("match").value = (parseInt($("match").value, 10) || 0) + 1;
-    saveSetup();
-    resetForm();
-    window.scrollTo(0, 0);
-  }
-  justSubmitted = false;
+$("qrClose").onclick = () => $("qrOverlay").classList.remove("show");
+$("qrPrev").onclick = () => { if (qrPage > 0) { qrPage--; drawPage(); } };
+$("qrNext").onclick = () => { if (qrPage < qrPages.length - 1) { qrPage++; drawPage(); } };
+
+$("showAll").onclick = () => {
+  const hist = load(LS_HISTORY, []);
+  if (hist.length) showAllQR(hist);
 };
 
 $("clearHistory").onclick = () => {
@@ -484,16 +606,19 @@ function updateNav(ev) {
 // The event picked on the home page arrives as ?event=…
 const urlEvent = new URLSearchParams(location.search).get("event")?.trim().toLowerCase() || "";
 // Remove it from the address so a later reload keeps any event typed here.
-if (urlEvent) history.replaceState(null, "", location.pathname);
+if (urlEvent) history.replaceState(null, "", location.pathname + location.hash);
 
 // ---------- start ----------
 document.title = $("appTitle").textContent = SCOUT_CONFIG.appName;
 loadSetup();
+if (SHEET.fromLink()) $("sheetBox").open = true;
+$("sheetUrl").value = SHEET.url();
 if (urlEvent) { $("event").value = urlEvent; saveSetup(); }
 updateNav($("event").value.trim());
 renderStations();
 resetForm();
 renderHistory();
+sendToSheet(false);
 showTbaStatus();
 // New event from the home page: get its schedule now if we can.
 if (urlEvent && !TBA.forEvent(urlEvent) && navigator.onLine) $("tbaFetch").click();

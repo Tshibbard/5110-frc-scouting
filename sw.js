@@ -1,7 +1,7 @@
 // Offline cache for the scouting apps. Network-first so edits to config.js
 // show up when online; falls back to the cached copy when offline.
-const CACHE = "5110-frc-scouting-test-v3";
-const FILES = ["./", "index.html", "scout.html", "analysis.html", "config.js", "tba.js", "manifest.json",
+const CACHE = "5110-frc-scouting-test-v4";
+const FILES = ["./", "index.html", "scout.html", "analysis.html", "config.js", "tba.js", "sheet.js", "manifest.json",
                "lib/qrcode.js", "lib/jsQR.js"];
 
 self.addEventListener("install", (e) => {

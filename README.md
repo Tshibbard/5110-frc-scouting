@@ -18,6 +18,8 @@ repository, also change `5110-frc-scouting-test` in these links.*
 | `config.js` | **The fields being scouted** and the TBA values to pull. Edit this for each season's game. |
 | `tba-events.txt` | Teams (and seasons) and extra events to download from The Blue Alliance. |
 | `tba.js` | Loads the TBA data the website publishes. Both apps use it. |
+| `sheet.js` | Sends saved matches to the team's Google Sheet and reads them back. Both apps use it. |
+| `scripts/google-sheet.gs` | The script to paste into the Google Sheet (see *Google Sheet backup*). |
 | `scripts/fetch_tba.py` | Downloads TBA data using the secret key. Run by GitHub Actions. |
 | `.github/workflows/pages.yml` | Publishes the site with fresh TBA data every 15 minutes. |
 | `lib/` | Bundled QR libraries (qrcode-generator, jsQR), so nothing is loaded from the internet. |
@@ -48,6 +50,34 @@ The apps load those files from the website, and no device ever needs the key.
 - **If the key leaks:** delete it at thebluealliance.com/account, make a new one and update the
   `TBA_KEY` secret.
 
+## Google Sheet backup (optional)
+Every saved match can also go to a shared Google Sheet. Scout sends each match when it's saved, or
+later if there's no internet. Analysis has an **Update from Sheet** button, and also updates by itself
+every 2 minutes, so it picks up every tablet's matches without scanning. QR codes still work as the
+offline backup.
+
+**Setup (once):**
+1. Create a Google Sheet. Open **Extensions → Apps Script**, delete what's there, paste in all of
+   `scripts/google-sheet.gs` and save.
+2. Click **Deploy → New deployment**, choose type **Web app**, and set *Execute as* **Me** and
+   *Who has access* **Anyone**. Click **Deploy** and allow access when Google asks.
+3. Copy the **Web app URL** (it ends in `/exec`). On the analysis laptop, paste it under
+   **Google Sheet → Web-app URL** and press **Save URL**.
+4. Press **Copy tablet setup link** and send the link privately to scouts (team chat, not a public
+   page). Opening it on a tablet stores the URL there. You can also paste the URL under
+   **Setup → Google Sheet backup** in Scout.
+
+The Sheet gets one row per event, match and station. A newer save replaces the row. The `json`
+column is what the apps read back, so don't edit it. You can rename the other headers.
+
+**Keeping the URL private:** the URL is never in this repository or on the website. It is only on
+devices where someone entered it or opened the setup link. Anyone who has it can add rows, so share
+it only with the team. If it leaks, in Apps Script go to **Deploy → Manage deployments**, archive the
+old deployment and create a new one, then send out a new setup link. The old URL stops working.
+
+**After changing `google-sheet.gs`:** go to **Deploy → Manage deployments → Edit**, and choose
+**New version**. This keeps the same URL.
+
 ## Picking the event (home page)
 On the home page, enter your team number, then pick the season and one of the events the team is
 registered for. The list also includes any extra events in `tba-events.txt`. The **Scout** and
@@ -74,9 +104,16 @@ TBA_KEY=yourkey python3 scripts/fetch_tba.py  # optional: TBA data for local tes
 
 ## Workflow at an event
 1. Each scout enters their name, the event code and their driver station once. These are remembered.
-2. For each match, check the team number, tap through the match, then press **Save & show QR code**.
-3. Show the QR code to the analysis laptop. It beeps when the record is added. Press **Next match**.
+2. For each match, check the team number and tap through the match.
+3. Press **Show QR code** and hold it up to the analysis laptop. It beeps when the record is added.
+   Press **Back**, then **Save match**. This saves the match on the device and moves on to the next one.
 4. If the analysis laptop missed a match, find it under **Saved on this device** and press **Show QR**.
+   To send everything at once, press **Show all as QR**. If the matches don't fit in one code, the app
+   splits them into several. Scan each one, using **Next code →**. You can scan them in any order, and
+   scanning a match twice is harmless.
+5. If Scout and Analysis are used on the **same device**, nothing needs scanning. Analysis picks up
+   matches saved on that device when it opens, and right away when Scout saves in another tab.
+   A match deleted in Analysis stays deleted until Scout saves that match again.
 5. Export a CSV from the analysis laptop for Excel, Google Sheets or Tableau.
 
 Scanning the same match and station twice replaces the earlier record, so re-scans are harmless.

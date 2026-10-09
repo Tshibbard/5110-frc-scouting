@@ -60,7 +60,8 @@
   .x { background: transparent; color: var(--muted); padding: 2px 6px; }
   .x:hover { color: var(--bad); }
   .tba { display: grid; grid-template-columns: 200px auto; gap: 10px; align-items: end; }
-  @media (max-width: 800px) { .tba { grid-template-columns: 1fr; } }
+  .sheet { display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px; align-items: end; }
+  @media (max-width: 800px) { .tba, .sheet { grid-template-columns: 1fr; } }
   nav.links { display: flex; gap: 14px; font-size: 14px; }
   nav.links a { color: var(--accent); text-decoration: none; font-weight: 600; }
   nav.links a[aria-current] { color: var(--muted); }
@@ -124,6 +125,18 @@
   </section>
 
   <section class="card">
+    <h2>Google Sheet</h2>
+    <div class="sheet">
+      <div><label class="muted" for="sheetUrl">Web-app URL (see README)</label>
+        <input id="sheetUrl" type="password" autocomplete="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec"></div>
+      <button id="sheetSave">Save URL</button>
+      <button id="sheetPull" class="primary">Update from Sheet</button>
+      <button id="sheetLink">Copy tablet setup link</button>
+    </div>
+    <div class="muted" id="sheetStatus"></div>
+  </section>
+
+  <section class="card">
     <div class="tabs">
       <button data-tab="records" aria-selected="true">Match records</button>
       <button data-tab="teams" aria-selected="false">Team averages</button>
@@ -137,6 +150,7 @@
 <script src="lib/jsQR.js"></script>
 <script src="config.js"></script>
 <script src="tba.js"></script>
+<script src="sheet.js"></script>
 <script>
 "use strict";
 const LS_DATA = "frcs.import.records";  // old name, kept so saved records survive the rename
@@ -164,38 +178,143 @@ const recKey = (r) => `${r._e}|${r._m}|${r._p}`;
 let freshKey = null;
 
 // ---------- ingest ----------
+// A code holds one record, or an array of records ("Show all as QR" in scout.html).
 function ingest(text) {
   text = (text || "").trim();
   if (!text.startsWith(QR_PREFIX)) { setStatus("Not a scouting QR code.", "bad"); return false; }
-  let rec;
-  try { rec = JSON.parse(text.slice(QR_PREFIX.length)); }
+  let data;
+  try { data = JSON.parse(text.slice(QR_PREFIX.length)); }
   catch { setStatus("QR code data is damaged — rescan.", "bad"); return false; }
-  if (!rec || !rec._m || !rec._t || !rec._p) { setStatus("QR code is missing match/team/station.", "bad"); return false; }
+  const valid = (r) => r && r._m && r._t && r._p;
 
-  const key = recKey(rec);
-  const i = records.findIndex((r) => recKey(r) === key);
+  if (Array.isArray(data)) {
+    const list = data.filter(valid);
+    if (!list.length) { setStatus("QR code has no complete matches.", "bad"); return false; }
+    const n = { added: 0, updated: 0, same: 0 };
+    for (const rec of list) n[addRecord(rec)]++;
+    const parts = [n.added && `${n.added} added`, n.updated && `${n.updated} updated`, n.same && `${n.same} already had`];
+    setStatus(`✓ ${list.length} matches: ${parts.filter(Boolean).join(", ")}`, n.added || n.updated ? "ok" : "warn");
+    warnVersion(list);
+    afterIngest();
+    const ms = list.map((r) => r._m);
+    $("lastScan").textContent = `Last: matches ${Math.min(...ms)}–${Math.max(...ms)} by ${list[0]._s || "?"} at ${new Date().toLocaleTimeString()}`;
+    return true;
+  }
+
+  const rec = data;
+  if (!valid(rec)) { setStatus("QR code is missing match/team/station.", "bad"); return false; }
   const label = `Match ${rec._m} · Team ${rec._t} · ${rec._p}`;
-  if (i >= 0) {
-    if (JSON.stringify(records[i]) === JSON.stringify(rec)) {
-      setStatus(`Already have ${label}`, "warn");
-      return true;
-    }
-    records[i] = rec;
-    setStatus(`Updated ${label} (replaced earlier scan)`, "warn");
-  } else {
-    records.push(rec);
-    setStatus(`✓ Added ${label}`, "ok");
-  }
-  if (rec._v !== SCOUT_CONFIG.version) {
-    setStatus(`${$("status").textContent} — warning: scanned config v${rec._v}, this app is v${SCOUT_CONFIG.version}`, "warn");
-  }
-  freshKey = key;
-  persist();
-  render();
-  beep();
+  const result = addRecord(rec);
+  if (result === "same") { setStatus(`Already have ${label}`, "warn"); return true; }
+  if (result === "updated") setStatus(`Updated ${label} (replaced earlier scan)`, "warn");
+  else setStatus(`✓ Added ${label}`, "ok");
+  warnVersion([rec]);
+  freshKey = recKey(rec);
+  afterIngest();
   $("lastScan").textContent = `Last: ${label} by ${rec._s || "?"} at ${new Date().toLocaleTimeString()}`;
   return true;
 }
+
+// Add or replace one record. Returns "added", "updated" or "same".
+function addRecord(rec) {
+  const key = recKey(rec);
+  const i = records.findIndex((r) => recKey(r) === key);
+  if (i < 0) { records.push(rec); return "added"; }
+  if (JSON.stringify(records[i]) === JSON.stringify(rec)) return "same";
+  records[i] = rec;
+  return "updated";
+}
+
+function warnVersion(list) {
+  const v = list.find((r) => r._v !== SCOUT_CONFIG.version)?._v;
+  if (v !== undefined) {
+    setStatus(`${$("status").textContent} — warning: scanned config v${v}, this app is v${SCOUT_CONFIG.version}`, "warn");
+  }
+}
+
+function afterIngest() {
+  persist();
+  render();
+  beep();
+}
+
+// ---------- same-device sync ----------
+// When Scout is used in this browser, its saved matches (LS_SCOUT, see scout.html)
+// come in here too, on load and whenever Scout saves in another tab.
+// Each saved version is pulled once, so records deleted here don't come back
+// unless Scout saves that match again.
+const LS_SCOUT = "frcs.history", LS_SEEN = "frcs.import.localSeen";
+const savedVersion = (r) => `${recKey(r)}|${r._ts}`;
+// Add records not pulled before. Returns counts, and saves + redraws if anything changed.
+function mergeNew(list) {
+  let seen;
+  try { seen = new Set(JSON.parse(localStorage.getItem(LS_SEEN) || "[]")); } catch { seen = new Set(); }
+  const n = { added: 0, updated: 0, same: 0 };
+  for (const rec of list) {
+    if (!rec || !rec._m || !rec._t || !rec._p || seen.has(savedVersion(rec))) continue;
+    n[addRecord(rec)]++;
+    seen.add(savedVersion(rec));
+  }
+  if (n.added || n.updated || n.same) {
+    try { localStorage.setItem(LS_SEEN, JSON.stringify([...seen])); } catch {}
+    persist();
+    render();
+  }
+  return n;
+}
+const changes = (n) => [n.added && `${n.added} added`, n.updated && `${n.updated} updated`].filter(Boolean).join(", ");
+
+function syncLocal() {
+  let hist;
+  try { hist = JSON.parse(localStorage.getItem(LS_SCOUT) || "[]"); } catch { return; }
+  const n = mergeNew(hist);
+  if (n.added || n.updated) setStatus(`✓ From Scout on this device: ${changes(n)}`, "ok");
+}
+window.addEventListener("storage", (e) => { if (e.key === LS_SCOUT) syncLocal(); });
+// Also check when switching back to this tab, in case a storage event was missed.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) syncLocal(); });
+
+// ---------- Google Sheet ----------
+// Update = send records scanned here that the Sheet doesn't have (tablets that
+// never got internet), then pull in everyone's matches.
+let pulling = false;
+async function syncSheet(quiet) {
+  if (!SHEET.url() || pulling) return;
+  pulling = true;
+  $("sheetPull").disabled = true;
+  $("sheetStatus").textContent = "Updating…";
+  try {
+    const sent = await SHEET.sendPending(records);
+    const n = mergeNew(await SHEET.pull());
+    const parts = [changes(n) || "nothing new", sent && `${sent} sent to the Sheet`].filter(Boolean);
+    $("sheetStatus").textContent = `Updated ${new Date().toLocaleTimeString()}: ${parts.join(", ")}.`;
+  } catch (e) {
+    $("sheetStatus").textContent = quiet ? `Not updated (${e.message})` : e.message;
+  }
+  $("sheetPull").disabled = false;
+  pulling = false;
+}
+
+$("sheetSave").onclick = () => {
+  try {
+    SHEET.setUrl($("sheetUrl").value);
+    $("sheetStatus").textContent = SHEET.url() ? "URL saved." : "URL removed.";
+    syncSheet(false);
+  } catch (e) { $("sheetStatus").textContent = e.message; }
+};
+$("sheetPull").onclick = () => {
+  if (!SHEET.url()) { $("sheetStatus").textContent = "Enter the web-app URL and press Save URL first."; return; }
+  syncSheet(false);
+};
+$("sheetLink").onclick = async () => {
+  if (!SHEET.url()) { $("sheetStatus").textContent = "Enter the web-app URL and press Save URL first."; return; }
+  const link = SHEET.setupLink("scout.html");
+  try { await navigator.clipboard.writeText(link); $("sheetStatus").textContent = "Setup link copied. Send it privately to scouts; opening it on a tablet sets the URL."; }
+  catch { prompt("Copy this setup link and send it privately to scouts:", link); }
+};
+// Every 2 minutes while online, pick up matches from the other tablets.
+setInterval(() => { if (navigator.onLine) syncSheet(true); }, 120000);
+window.addEventListener("online", () => syncSheet(true));
 
 function setStatus(msg, cls) { const s = $("status"); s.textContent = msg; s.className = cls || ""; }
 
@@ -534,7 +653,7 @@ function updateNav(ev) {
 // The event picked on the home page arrives as ?event=…
 const urlEvent = new URLSearchParams(location.search).get("event")?.trim().toLowerCase() || "";
 // Remove it from the address so a later reload keeps any event typed here.
-if (urlEvent) history.replaceState(null, "", location.pathname);
+if (urlEvent) history.replaceState(null, "", location.pathname + location.hash);
 $("tbaEvent").value = urlEvent || TBA.data?.event || records.at(-1)?._e || "";
 updateNav($("tbaEvent").value.trim());
 $("tbaEvent").onchange = () => updateNav($("tbaEvent").value.trim());
@@ -703,6 +822,10 @@ $("clearAll").onclick = () => {
 listCameras();
 showTbaStatus();
 render();
+syncLocal();
+SHEET.fromLink();
+$("sheetUrl").value = SHEET.url();
+if (navigator.onLine) syncSheet(true);
 // New event from the home page: load its TBA data now if we can.
 if (urlEvent && TBA.data?.event !== urlEvent && navigator.onLine) $("tbaFetch").click();
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
