@@ -68,6 +68,7 @@
   #tbaStatus { margin-top: 8px; } #tbaStatus.bad { color: var(--bad); font-weight: 600; }
   td.good { color: var(--good); } td.warn { color: var(--warn); font-weight: 600; }
   td.miss { color: var(--bad); font-weight: 600; }
+  td.ours { color: var(--accent); font-weight: 700; } td.muted { font-size: inherit; }
 </style>
 </head>
 <body>
@@ -598,6 +599,10 @@ function cOpr(d, key) {
   return new Map(teams.map((t, i) => [t, A[i][n] / A[i][i]]));
 }
 
+// Our team, as picked on the home page, is highlighted in the schedule.
+const OUR_TEAM = (() => { try { return Number(JSON.parse(localStorage.getItem("frcs.home") || "{}").team) || null; }
+                          catch { return null; } })();
+
 // Every qualification match from TBA, showing which robots have been scouted.
 function scheduleView() {
   const d = TBA.data;
@@ -609,14 +614,32 @@ function scheduleView() {
   for (const st of TBA.STATIONS) cols.push({ key: st, label: st, cls: (v, r) => r["_c" + st] });
   cols.push({ key: "_got", label: "Scouted", num: true },
             { key: "rs", label: "Red score", num: true }, { key: "bs", label: "Blue score", num: true });
+  // Statbotics predictions, mainly for matches not played yet.
+  const pct = (v) => (v == null ? "" : Math.round(v * 100) + "%");
+  const fmt0 = (v) => (v == null ? "" : Math.round(v));
+  const rpNames = SCOUT_CONFIG.statbotics?.rp || ["RP 1", "RP 2", "RP 3"];
+  const hasPred = Object.values(d.matches).some((m) => m.p);
+  if (hasPred) {
+    const played = (v, r) => (r.rs != null ? "muted" : "");
+    cols.push({ key: "_prs", label: "Pred red", num: true, fmt: fmt0, cls: played },
+              { key: "_pbs", label: "Pred blue", num: true, fmt: fmt0, cls: played },
+              { key: "_prw", label: "Red win %", num: true, fmt: pct, cls: played },
+              ...rpNames.flatMap((n, i) => [
+                { key: `_prrp${i}`, label: `Red ${n} %`, num: true, fmt: pct, cls: played },
+                { key: `_pbrp${i}`, label: `Blue ${n} %`, num: true, fmt: pct, cls: played }]));
+  }
   const rows = Object.entries(d.matches).map(([m, sched]) => {
     const row = { _m: Number(m), rs: sched.rs, bs: sched.bs };
+    if (sched.p) {
+      Object.assign(row, { _prs: sched.p.rs, _pbs: sched.p.bs, _prw: sched.p.rw });
+      rpNames.forEach((n, i) => { row[`_prrp${i}`] = sched.p.rrp?.[i] ?? null; row[`_pbrp${i}`] = sched.p.brp?.[i] ?? null; });
+    }
     let got = 0;
     for (const st of TBA.STATIONS) {
       const team = sched[st], have = scouted.get(`${m}|${st}`);
       if (have == null) {
         row[st] = team;
-        row["_c" + st] = sched.rs != null ? "miss" : "";  // played but not scouted
+        row["_c" + st] = sched.rs != null ? "miss" : team === OUR_TEAM ? "ours" : "";  // played but not scouted
       } else if (have === team) {
         row[st] = `${team} ✓`; row["_c" + st] = "good"; got++;
       } else {
@@ -640,7 +663,15 @@ function showTbaStatus(msg, cls) {
     `${ms.length} qualification matches (${ms.filter((m) => m.rs != null).length} played)`];
   if (Object.keys(d.oprs).length) parts.push("OPRs");
   if (Object.keys(d.ranks).length) parts.push("rankings");
+  if (Object.keys(d.epa || {}).length) parts.push("Statbotics EPAs");
+  if (ms.some((m) => m.p)) parts.push("match predictions");
   el.textContent = `${d.event}: ${parts.join(", ")}. TBA data from ${new Date(d.fetched).toLocaleString()}.`;
+  const e = d.sbEvent;
+  if (e?.mean != null) {
+    const r1 = (v) => (v == null ? "?" : (+v).toFixed(1));
+    el.textContent += ` Event EPA: average ${r1(e.mean)}, top 8 ${r1(e.top8)}, best ${r1(e.max)}.` +
+      (e.accN ? ` Statbotics picked the winner of ${Math.round(e.acc * 100)}% of ${e.accN} matches.` : "");
+  }
 }
 
 // Carry the current event over to the other app's link.
@@ -684,6 +715,11 @@ function teamSummary() {
   const d = TBA.data;
   if (d) for (const t of Object.keys(d.teams)) if (!byTeam.has(+t)) byTeam.set(+t, []);
   const hasRanks = d && Object.keys(d.ranks).length, hasOprs = d && Object.keys(d.oprs).length;
+  const epa = d?.epa || {}, hasEpa = Object.keys(epa).length > 0;
+  // Generic EPA parts, then the season's own values from config.js, but only those Statbotics sent.
+  const epaParts = [{ key: "auto_points", label: "Auto EPA" }, { key: "teleop_points", label: "Teleop EPA" },
+                    { key: "endgame_points", label: "Endgame EPA" }, ...(SCOUT_CONFIG.statbotics?.breakdown || [])]
+    .filter((f) => Object.values(epa).some((e) => e.bd?.[f.key] != null));
   const fmt2 = (v) => (v == null ? "" : (+v).toFixed(2));
   const game = hasGameData() ? gameStats(d) : null;
   const cols = [
@@ -696,6 +732,14 @@ function teamSummary() {
     ...(hasOprs ? [{ key: "_opr", label: "OPR", num: true, fmt: fmt1 },
                    { key: "_dpr", label: "DPR", num: true, fmt: fmt1 },
                    { key: "_ccwm", label: "CCWM", num: true, fmt: fmt1 }] : []),
+    ...(hasEpa ? [{ key: "_epa", label: "EPA", num: true, fmt: fmt1 },
+                  ...epaParts.map((f) => ({ key: "_eb_" + f.key, label: f.label, num: true, fmt: fmt1 })),
+                  { key: "_epaStart", label: "EPA at start", num: true, fmt: fmt1 },
+                  { key: "_epaMax", label: "EPA season max", num: true, fmt: fmt1 },
+                  { key: "_wRank", label: "World EPA rank", num: true },
+                  { key: "_wPct", label: "World percentile", num: true, fmt: pct },
+                  { key: "_sRec", label: "Season W-L-T" },
+                  { key: "_sWr", label: "Season win %", num: true, fmt: pct }] : []),
     ...(game ? [
       { key: "_gn", label: "TBA matches", num: true },
       ...(GAME.robot || []).flatMap((f) => [
@@ -720,6 +764,12 @@ function teamSummary() {
       const rk = d.ranks[team], op = d.oprs[team];
       Object.assign(row, { _name: TBA.teamName(team), _rank: rk?.rank ?? null, _rec: rk?.rec ?? "",
         _rs: rk?.rs ?? null, _opr: op?.opr ?? null, _dpr: op?.dpr ?? null, _ccwm: op?.ccwm ?? null });
+    }
+    if (hasEpa) {
+      const e = epa[team] || {};
+      Object.assign(row, { _epa: e.epa ?? null, _epaStart: e.start ?? null, _epaMax: e.max ?? null,
+        _wRank: e.rank ?? null, _wPct: e.pct ?? null, _sRec: e.rec || "", _sWr: e.wr ?? null });
+      for (const f of epaParts) row["_eb_" + f.key] = e.bd?.[f.key] ?? null;
     }
     if (game) {
       const s = game.per.get(team);

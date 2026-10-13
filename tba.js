@@ -12,6 +12,7 @@
 // Only qualification matches are used, because the scout app numbers
 // matches 1, 2, 3… and playoff matches don't fit that scheme.
 // Which score-breakdown values are kept is set by SCOUT_CONFIG.tba in config.js.
+// Statbotics EPAs and match predictions come along in the same download.
 // =====================================================================
 const TBA = (() => {
   const LS_DATA = "frcs.tba.data";
@@ -48,15 +49,19 @@ const TBA = (() => {
     }
 
     // OPRs and rankings don't exist until matches are played, so they may be null.
-    const [teams, matches, oprs, rankings, info] = await Promise.all([
+    // Statbotics files are optional too: the workflow skips them when Statbotics is down.
+    const [teams, matches, oprs, rankings, info, sbTeams, sbMatches, sbEvent] = await Promise.all([
       get(ev, "teams"), get(ev, "matches"),
       get(ev, "oprs").catch(() => null), get(ev, "rankings").catch(() => null),
       get(ev, "info").catch(() => null),
+      get(ev, "sb_team_events").catch(() => null), get(ev, "sb_matches").catch(() => null),
+      get(ev, "sb_event").catch(() => null),
     ]);
 
     // fetched = when GitHub last downloaded it from TBA.
     const d = { event: ev, fetched: Date.parse(info?.updated) || Date.now(), teams: {}, matches: {}, oprs: {}, ranks: {},
-                rsName: rankings?.sort_order_info?.[0]?.name || "Ranking score" };
+                rsName: rankings?.sort_order_info?.[0]?.name || "Ranking score",
+                epa: sbTeams || {}, sbEvent: sbEvent || null };
     for (const t of teams || []) d.teams[t.team_number] = t.nickname || "";
 
     const game = SCOUT_CONFIG.tba;
@@ -72,6 +77,8 @@ const TBA = (() => {
       row.rs = m.alliances.red.score >= 0 ? m.alliances.red.score : null;
       row.bs = m.alliances.blue.score >= 0 ? m.alliances.blue.score : null;
       if (readBreakdown && m.score_breakdown) row.g = breakdown(m.score_breakdown, game);
+      // Statbotics prediction: rs/bs scores, rw red win chance, rrp/brp RP chances.
+      if (sbMatches?.[m.match_number]) row.p = sbMatches[m.match_number];
       d.matches[m.match_number] = row;
     }
 
