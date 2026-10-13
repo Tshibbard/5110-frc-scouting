@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download The Blue Alliance data listed in tba-events.txt into tba/.
+"""Download The Blue Alliance and Statbotics data listed in tba-events.txt into tba/.
 
 The apps read these files from the website, so no device ever needs the TBA key.
 GitHub Actions runs this with the TBA_KEY repository secret (.github/workflows/pages.yml).
@@ -9,6 +9,8 @@ Output:
   tba/index.json                 teams, their seasons, and every event downloaded (for index.html)
   tba/teams/<team>/<season>.json events the team is registered for that season
   tba/<event>/*.json             teams, matches, OPRs, rankings and info for each event (for tba.js)
+  tba/<event>/sb_*.json          Statbotics EPAs, match predictions and event summary (optional;
+                                 the TBA files are still written when Statbotics is down)
 """
 import json
 import os
@@ -23,13 +25,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "tba"
 API = "https://www.thebluealliance.com/api/v3"
+SB_API = "https://api.statbotics.io/v3"  # free, needs no key
 KEY = os.environ.get("TBA_KEY") or sys.exit("Set TBA_KEY to your The Blue Alliance read key")
 EVENT_RE = re.compile(r"\d{4}[a-z0-9]+")
 
 
-def get(path, optional=False):
+def get(path, optional=False, api=API):
     """GET an API path. optional: return None instead of stopping when it fails."""
-    req = urllib.request.Request(API + path, headers={"X-TBA-Auth-Key": KEY, "User-Agent": "5110-frc-scouting-test"})
+    headers = {"User-Agent": "5110-frc-scouting-test"}
+    if api == API:
+        headers["X-TBA-Auth-Key"] = KEY
+    req = urllib.request.Request(api + path, headers=headers)
     error = None
     for attempt in range(3):
         try:
@@ -37,7 +43,7 @@ def get(path, optional=False):
                 return json.load(res)
         except urllib.error.HTTPError as e:
             error = f"HTTP {e.code}"
-            if e.code == 401:
+            if e.code == 401 and api == API:
                 sys.exit("TBA rejected the TBA_KEY secret. Check it at thebluealliance.com/account.")
             if e.code == 404:
                 break
@@ -58,6 +64,77 @@ def write(rel, data):
 def event_info(e):
     return {"name": e.get("short_name") or e.get("name") or e["key"], "start": e.get("start_date"),
             "end": e.get("end_date"), "city": e.get("city")}
+
+
+def sb_get(path):
+    """GET a Statbotics path. Always optional: returns None when it fails."""
+    return get(path, optional=True, api=SB_API)
+
+
+def r2(v):
+    return round(v, 2) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+
+
+def sb_team_years(year, cache={}):  # cache: one download per year per run
+    """Every team's season EPA, ranks and record, keyed by team number (one paged download per year)."""
+    if year not in cache:
+        found, offset = {}, 0
+        while True:
+            page = sb_get(f"/team_years?year={year}&limit=1000&offset={offset}")
+            if not page:
+                break
+            for t in page:
+                found[t.get("team")] = t
+            if len(page) < 1000:
+                break
+            offset += 1000
+        cache[year] = found
+    return cache[year]
+
+
+def sb_event(ev):
+    """Download Statbotics data for one event and write only what the apps use."""
+    team_events = sb_get(f"/team_events?event={ev}&limit=1000")
+    if team_events is None:
+        print(f"::warning::No Statbotics team data for {ev}")
+        return
+    seasons = sb_team_years(int(ev[:4]))
+    teams, keys = {}, set()
+    for te in team_events:
+        epa, n = te.get("epa") or {}, te.get("team")
+        stats, bd = epa.get("stats") or {}, epa.get("breakdown") or {}
+        keys.update(bd)
+        ty = seasons.get(n) or {}
+        rank = ((ty.get("epa") or {}).get("ranks") or {}).get("total") or {}
+        rec = ty.get("record") or {}
+        teams[str(n)] = {
+            "epa": r2((epa.get("total_points") or {}).get("mean")), "sd": r2((epa.get("total_points") or {}).get("sd")),
+            "bd": {k: r2(v) for k, v in bd.items()},
+            "start": r2(stats.get("start")), "max": r2(stats.get("max")),
+            "rank": rank.get("rank"), "pct": r2(rank.get("percentile")), "count": rank.get("team_count"),
+            "rec": f"{rec['wins']}-{rec['losses']}-{rec['ties']}" if rec.get("count") else "",
+            "wr": r2(rec.get("winrate")) if rec.get("count") else None,
+        }
+    # The game-specific names change each season; copy the ones you want into SCOUT_CONFIG.statbotics.
+    print(f"Statbotics EPA breakdown names for {ev}: {', '.join(sorted(keys))}")
+    write(f"{ev}/sb_team_events.json", teams)
+
+    preds = {}
+    for m in sb_get(f"/matches?event={ev}&limit=1000") or []:
+        p = m.get("pred") or {}
+        if m.get("comp_level") != "qm" or not p:
+            continue
+        preds[str(m.get("match_number"))] = {
+            "rs": r2(p.get("red_score")), "bs": r2(p.get("blue_score")), "rw": r2(p.get("red_win_prob")),
+            "rrp": [r2(p.get(f"red_rp_{i}")) for i in (1, 2, 3)], "brp": [r2(p.get(f"blue_rp_{i}")) for i in (1, 2, 3)],
+        }
+    write(f"{ev}/sb_matches.json", preds)
+
+    e = sb_get(f"/event/{ev}") or {}
+    ee, win = e.get("epa") or {}, ((e.get("metrics") or {}).get("win_prob") or {})
+    write(f"{ev}/sb_event.json", {"mean": r2(ee.get("mean")), "top8": r2(ee.get("top_8")),
+                                  "top24": r2(ee.get("top_24")), "max": r2(ee.get("max")),
+                                  "acc": r2(win.get("acc")), "accN": win.get("count")})
 
 
 def read_list():
@@ -106,6 +183,7 @@ def main():
         # OPRs and rankings don't exist before matches are played.
         write(f"{ev}/oprs.json", get(f"/event/{ev}/oprs", optional=True))
         write(f"{ev}/rankings.json", get(f"/event/{ev}/rankings", optional=True))
+        sb_event(ev)
         write(f"{ev}/info.json", {"updated": now})
         print(f"Downloaded {ev}")
 

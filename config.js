@@ -40,6 +40,20 @@ const SCOUT_CONFIG = {
     ],
   },
 
+  // Statbotics EPA (expected points a robot adds) for this season's game.
+  //   breakdown  extra EPA columns. key is Statbotics' name for the value; the
+  //              "Deploy site" Actions log lists the names for each event.
+  //              Columns only appear when the downloaded data has that key.
+  //   rp         names of ranking points 1-3, for the predicted RP chances.
+  statbotics: {
+    breakdown: [
+      { key: "auto_fuel", label: "Auto fuel EPA" },
+      { key: "teleop_fuel", label: "Teleop fuel EPA" },
+      { key: "total_tower_points", label: "Tower EPA" },
+    ],
+    rp: ["Energized", "Supercharged", "Traversal"],
+  },
+
   sections: [
     {
       title: "Autonomous",

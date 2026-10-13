@@ -20,7 +20,7 @@ repository, also change `5110-frc-scouting-test` in these links.*
 | `tba.js` | Loads the TBA data the website publishes. Both apps use it. |
 | `sheet.js` | Sends saved matches to the team's Google Sheet and reads them back. Both apps use it. |
 | `scripts/google-sheet.gs` | The script to paste into the Google Sheet (see *Google Sheet backup*). |
-| `scripts/fetch_tba.py` | Downloads TBA data using the secret key. Run by GitHub Actions. |
+| `scripts/fetch_tba.py` | Downloads TBA data using the secret key, and Statbotics data (no key needed). Run by GitHub Actions. |
 | `.github/workflows/pages.yml` | Publishes the site with fresh TBA data every 15 minutes. |
 | `lib/` | Bundled QR libraries (qrcode-generator, jsQR), so nothing is loaded from the internet. |
 
@@ -150,6 +150,21 @@ score breakdown, and the analysis app adds it:
 
 Which values are pulled is set in the `tba` section of `config.js`. Update it each season, like
 the scouting fields. Only qualification matches are used.
+
+**Statbotics.** The same workflow also downloads [Statbotics](https://www.statbotics.io) data for
+each event. It needs no key. If Statbotics is down, the TBA data is still published without it.
+EPA (Expected Points Added) estimates how many points a robot adds to its alliance. Unlike OPR, it
+carries over from the team's earlier events, so it is already useful before the first match.
+- *Team averages*: EPA, auto/teleop/endgame EPA, EPA at the start of the event and the season
+  best, world EPA rank and percentile, and the season W-L-T and win rate across all events.
+- *Schedule*: predicted scores, red's chance to win and each alliance's chance at each RP. They
+  are greyed out once a match is played. Your team (picked on the home page) is shown in blue.
+- The status line under **Update TBA data** shows the event's average, top 8 and best EPA, and
+  how often Statbotics has picked the winner so far.
+
+The `statbotics` section of `config.js` sets extra EPA columns for this season's game and the RP
+names. Statbotics' names for the values change each season. The **Deploy site with TBA data** log
+lists them for each event ("Statbotics EPA breakdown names for …"), so you can copy the ones you want.
 
 ## Changing the fields
 Edit `config.js`. You can use these field types: `counter`, `checkbox`, `select`, `rating`
