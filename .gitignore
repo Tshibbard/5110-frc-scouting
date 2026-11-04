@@ -1,2 +1,3 @@
 # Downloaded by scripts/fetch_tba.py; the deploy workflow fetches it fresh.
 tba/
+__pycache__/

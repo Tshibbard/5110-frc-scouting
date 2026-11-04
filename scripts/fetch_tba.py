@@ -81,10 +81,10 @@ def sb_team_years(year, cache={}):  # cache: one download per year per run
         found, offset = {}, 0
         while True:
             page = sb_get(f"/team_years?year={year}&limit=1000&offset={offset}")
-            if not page:
+            if not isinstance(page, list) or not page:
                 break
             for t in page:
-                found[t.get("team")] = t
+                found[obj(t).get("team")] = t
             if len(page) < 1000:
                 break
             offset += 1000
@@ -92,49 +92,85 @@ def sb_team_years(year, cache={}):  # cache: one download per year per run
     return cache[year]
 
 
+def num(v, key="mean"):
+    """A number from Statbotics, which may send it bare or as {mean, sd}. None if it is neither."""
+    if isinstance(v, dict):
+        v = v.get(key)
+    return r2(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def obj(v):
+    return v if isinstance(v, dict) else {}
+
+
+def show_shape(name, sample):
+    """Print the keys Statbotics sent, so field names can be checked in the Actions log."""
+    if isinstance(sample, dict):
+        print(f"{name}: " + ", ".join(f"{k}{'{…}' if isinstance(v, dict) else ''}" for k, v in sample.items()))
+        for k, v in sample.items():
+            if isinstance(v, dict) and k in ("epa", "pred", "metrics", "record"):
+                show_shape(f"{name}.{k}", v)
+
+
+shape_shown = False
+
+
 def sb_event(ev):
     """Download Statbotics data for one event and write only what the apps use."""
+    global shape_shown
     team_events = sb_get(f"/team_events?event={ev}&limit=1000")
-    if team_events is None:
+    if not isinstance(team_events, list):
         print(f"::warning::No Statbotics team data for {ev}")
         return
+    matches = sb_get(f"/matches?event={ev}&limit=1000")
+    e = obj(sb_get(f"/event/{ev}"))
+    if not shape_shown:
+        shape_shown = True
+        print("::group::Statbotics response shape")
+        show_shape("team_event", team_events[0] if team_events else None)
+        show_shape("match", matches[0] if isinstance(matches, list) and matches else None)
+        show_shape("event", e)
+        print("::endgroup::")
+
     seasons = sb_team_years(int(ev[:4]))
     teams, keys = {}, set()
     for te in team_events:
-        epa, n = te.get("epa") or {}, te.get("team")
-        stats, bd = epa.get("stats") or {}, epa.get("breakdown") or {}
+        te = obj(te)
+        epa, n = obj(te.get("epa")), te.get("team")
+        stats = obj(epa.get("stats"))
+        bd = {k: num(v) for k, v in obj(epa.get("breakdown")).items() if num(v) is not None}
         keys.update(bd)
-        ty = seasons.get(n) or {}
-        rank = ((ty.get("epa") or {}).get("ranks") or {}).get("total") or {}
-        rec = ty.get("record") or {}
+        ty = obj(seasons.get(n))
+        rank = obj(obj(obj(ty.get("epa")).get("ranks")).get("total"))
+        rec = obj(ty.get("record"))
+        total = epa.get("total_points")
         teams[str(n)] = {
-            "epa": r2((epa.get("total_points") or {}).get("mean")), "sd": r2((epa.get("total_points") or {}).get("sd")),
-            "bd": {k: r2(v) for k, v in bd.items()},
-            "start": r2(stats.get("start")), "max": r2(stats.get("max")),
-            "rank": rank.get("rank"), "pct": r2(rank.get("percentile")), "count": rank.get("team_count"),
-            "rec": f"{rec['wins']}-{rec['losses']}-{rec['ties']}" if rec.get("count") else "",
-            "wr": r2(rec.get("winrate")) if rec.get("count") else None,
+            "epa": num(total), "sd": num(total, "sd") if isinstance(total, dict) else num(epa.get("total_points_sd")),
+            "bd": bd, "start": num(stats.get("start")), "max": num(stats.get("max")),
+            "rank": num(rank.get("rank")), "pct": num(rank.get("percentile")), "count": num(rank.get("team_count")),
+            "rec": f"{rec.get('wins', 0)}-{rec.get('losses', 0)}-{rec.get('ties', 0)}" if rec.get("count") else "",
+            "wr": num(rec.get("winrate")) if rec.get("count") else None,
         }
     # The game-specific names change each season; copy the ones you want into SCOUT_CONFIG.statbotics.
     print(f"Statbotics EPA breakdown names for {ev}: {', '.join(sorted(keys))}")
     write(f"{ev}/sb_team_events.json", teams)
 
     preds = {}
-    for m in sb_get(f"/matches?event={ev}&limit=1000") or []:
-        p = m.get("pred") or {}
+    for m in matches if isinstance(matches, list) else []:
+        m = obj(m)
+        p = obj(m.get("pred"))
         if m.get("comp_level") != "qm" or not p:
             continue
         preds[str(m.get("match_number"))] = {
-            "rs": r2(p.get("red_score")), "bs": r2(p.get("blue_score")), "rw": r2(p.get("red_win_prob")),
-            "rrp": [r2(p.get(f"red_rp_{i}")) for i in (1, 2, 3)], "brp": [r2(p.get(f"blue_rp_{i}")) for i in (1, 2, 3)],
+            "rs": num(p.get("red_score")), "bs": num(p.get("blue_score")), "rw": num(p.get("red_win_prob")),
+            "rrp": [num(p.get(f"red_rp_{i}")) for i in (1, 2, 3)], "brp": [num(p.get(f"blue_rp_{i}")) for i in (1, 2, 3)],
         }
     write(f"{ev}/sb_matches.json", preds)
 
-    e = sb_get(f"/event/{ev}") or {}
-    ee, win = e.get("epa") or {}, ((e.get("metrics") or {}).get("win_prob") or {})
-    write(f"{ev}/sb_event.json", {"mean": r2(ee.get("mean")), "top8": r2(ee.get("top_8")),
-                                  "top24": r2(ee.get("top_24")), "max": r2(ee.get("max")),
-                                  "acc": r2(win.get("acc")), "accN": win.get("count")})
+    ee, win = obj(e.get("epa")), obj(obj(e.get("metrics")).get("win_prob"))
+    write(f"{ev}/sb_event.json", {"mean": num(ee.get("mean")), "top8": num(ee.get("top_8")),
+                                  "top24": num(ee.get("top_24")), "max": num(ee.get("max")),
+                                  "acc": num(win.get("acc")), "accN": num(win.get("count"))})
 
 
 def read_list():
@@ -183,7 +219,10 @@ def main():
         # OPRs and rankings don't exist before matches are played.
         write(f"{ev}/oprs.json", get(f"/event/{ev}/oprs", optional=True))
         write(f"{ev}/rankings.json", get(f"/event/{ev}/rankings", optional=True))
-        sb_event(ev)
+        try:
+            sb_event(ev)
+        except Exception as e:  # Statbotics is extra; never let it stop the TBA data from publishing
+            print(f"::warning::Statbotics data for {ev} skipped: {e!r}")
         write(f"{ev}/info.json", {"updated": now})
         print(f"Downloaded {ev}")
 
