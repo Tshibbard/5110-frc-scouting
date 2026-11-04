@@ -8,8 +8,11 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "*/15 * * * *"   # GitHub may run this late when it is busy
-  workflow_dispatch:          # "Run workflow" button for an immediate update
+    # GitHub may run these late when it is busy. To change the season, move months
+    # between the two lines so each month is in exactly one.
+    - cron: "*/30 * * 3,4 *"      # event season (March-April): every 30 minutes
+    - cron: "41 9 * 1,2,5-12 1"   # rest of the year: weekly, Mondays 09:41 UTC
+  workflow_dispatch:              # "Run workflow" button for an immediate update
 
 permissions:
   contents: read

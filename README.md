@@ -21,7 +21,7 @@ repository, also change `5110-frc-scouting-test` in these links.*
 | `sheet.js` | Sends saved matches to the team's Google Sheet and reads them back. Both apps use it. |
 | `scripts/google-sheet.gs` | The script to paste into the Google Sheet (see *Google Sheet backup*). |
 | `scripts/fetch_tba.py` | Downloads TBA data using the secret key, and Statbotics data (no key needed). Run by GitHub Actions. |
-| `.github/workflows/pages.yml` | Publishes the site with fresh TBA data every 15 minutes. |
+| `.github/workflows/pages.yml` | Publishes the site with fresh TBA data: every 30 minutes in March–April, weekly otherwise. |
 | `lib/` | Bundled QR libraries (qrcode-generator, jsQR), so nothing is loaded from the internet. |
 
 ## Publishing on GitHub (once)
@@ -35,7 +35,7 @@ repository, also change `5110-frc-scouting-test` in these links.*
 ### How the TBA key stays secret
 The key is used only in GitHub Actions, never in a web page. Anything a web page uses can be read
 by anyone who opens it, so the key must never go in `config.js` or any other file in this repository.
-Every 15 minutes, the workflow uses the key to download what `tba-events.txt` lists. It then
+The workflow uses the key to download what `tba-events.txt` lists. It then
 publishes the data as plain JSON files in `tba/`. TBA data is public, so publishing it is fine.
 The apps load those files from the website, and no device ever needs the key.
 
@@ -43,10 +43,12 @@ The apps load those files from the website, and no device ever needs the key.
   A line like `team 5110 2025 2026` downloads every event team 5110 is registered for in those
   seasons, so new registrations show up by themselves. A line with an event code, such as
   `2026miket`, adds one more event your team isn't registered for (to scout ahead, for example).
-- **To update right away:** click **Actions → Deploy site with TBA data → Run workflow**. Otherwise
-  wait for the next 15-minute run. GitHub sometimes runs scheduled jobs late when it is busy.
-- **Between seasons:** turn the schedule off at **Actions → Deploy site with TBA data → ⋯ → Disable
-  workflow**. Turn it back on before the next event.
+- **When it updates:** every 30 minutes in March and April (the event season), every Monday the
+  rest of the year, and whenever something is pushed to `main`. To change the season, move months
+  between the two `cron` lines in `.github/workflows/pages.yml`. Week-1 events that start in late
+  February and fall off-season events are outside the season: use **Run workflow** for those.
+- **To update right away:** click **Actions → Deploy site with TBA data → Run workflow**. GitHub
+  sometimes runs scheduled jobs late when it is busy, so press it during matches if the data looks old.
 - **If the key leaks:** delete it at thebluealliance.com/account, make a new one and update the
   `TBA_KEY` secret.
 
