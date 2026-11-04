@@ -21,8 +21,7 @@ repository, also change `5110-frc-scouting-test` in these links.*
 | `sheet.js` | Sends saved matches to the team's Google Sheet and reads them back. Both apps use it. |
 | `scripts/google-sheet.gs` | The script to paste into the Google Sheet (see *Google Sheet backup*). |
 | `scripts/fetch_tba.py` | Downloads TBA data using the secret key, and Statbotics data (no key needed). Run by GitHub Actions. |
-| `.github/workflows/pages.yml` | Publishes the site with fresh TBA data: every 30 minutes during your team's events, weekly otherwise. |
-| `scripts/event_today.py` | Tells the workflow whether one of your teams has an event on today. |
+| `.github/workflows/pages.yml` | Publishes the site with fresh TBA data: every 30 minutes in March–April, weekly otherwise. |
 | `lib/` | Bundled QR libraries (qrcode-generator, jsQR), so nothing is loaded from the internet. |
 
 ## Publishing on GitHub (once)
@@ -44,10 +43,10 @@ The apps load those files from the website, and no device ever needs the key.
   A line like `team 5110 2025 2026` downloads every event team 5110 is registered for in those
   seasons, so new registrations show up by themselves. A line with an event code, such as
   `2026miket`, adds one more event your team isn't registered for (to scout ahead, for example).
-- **When it updates:** every 30 minutes from the day before until the day after an event that a
-  `team` line's team is registered for, and once a week (Monday) the rest of the time. Pushing to
-  `main` also updates it. Events added only by event code get the weekly update; use **Run
-  workflow** for those. Between events the half-hourly runs only check the date and skip the deploy.
+- **When it updates:** every 30 minutes in March and April (the event season), every Monday the
+  rest of the year, and whenever something is pushed to `main`. To change the season, move months
+  between the two `cron` lines in `.github/workflows/pages.yml`. Week-1 events that start in late
+  February and fall off-season events are outside the season: use **Run workflow** for those.
 - **To update right away:** click **Actions → Deploy site with TBA data → Run workflow**. GitHub
   sometimes runs scheduled jobs late when it is busy, so press it during matches if the data looks old.
 - **If the key leaks:** delete it at thebluealliance.com/account, make a new one and update the
