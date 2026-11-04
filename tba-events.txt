@@ -5,4 +5,4 @@
 #   2026miket             one more event, e.g. one your team isn't registered for.
 #
 # The site is rebuilt with fresh data every 15 minutes (see .github/workflows/pages.yml).
-team 5110 2025 2026
+team 5110 2025 2026 2027
