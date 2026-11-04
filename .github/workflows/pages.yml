@@ -8,7 +8,10 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "*/15 * * * *"   # GitHub may run this late when it is busy
+    # Every 30 minutes, but the check job below only lets it deploy while one of the
+    # teams in tba-events.txt has an event on. GitHub may run these late when it is busy.
+    - cron: "*/30 * * * *"
+    - cron: "41 9 * * 1"      # weekly refresh between events (Mondays 09:41 UTC)
   workflow_dispatch:          # "Run workflow" button for an immediate update
 
 permissions:
@@ -21,7 +24,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Pushes, "Run workflow" and the weekly refresh always deploy. The half-hourly runs
+  # deploy only during an event (scripts/event_today.py); otherwise deploy is skipped.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.when.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: when
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "$EVENT" != "schedule" ] || [ "$SCHEDULE" = "41 9 * * 1" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            site=$(gh api "repos/${{ github.repository }}/pages" --jq .html_url || true)
+            echo "run=$(python3 scripts/event_today.py "$site")" >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
+    needs: check
+    if: needs.check.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
